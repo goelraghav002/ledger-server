@@ -6,6 +6,8 @@ import { AuthModule } from './auth/auth.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { SyncModule } from './sync/sync.module';
 import { OrgsModule } from './orgs/orgs.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtGuardWithReflector } from './auth/jwt-guard-with-reflector';
 
 @Module({
   imports: [
@@ -16,6 +18,12 @@ import { OrgsModule } from './orgs/orgs.module';
     OrgsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: JwtGuardWithReflector,
+    },
+  ],
 })
-export class AppModule {}
+export class AppModule { }
