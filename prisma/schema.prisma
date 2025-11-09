@@ -87,7 +87,7 @@ model OrgMembership {
   userId    String
   orgId     String
   roleId    String
-  scopes    Json? // optional JSON for per-membership scoping
+  scopes    Json? // optional JSON
   createdAt DateTime @default(now())
 
   user User         @relation(fields: [userId], references: [id])
@@ -185,12 +185,12 @@ model Balance {
  */
 model Device {
   id         String   @id @default(uuid())
-  userId     String
-  token      String? // push token or device identifier
+  userId     String?
+  token      String?  @unique // make unique
   lastSeenAt DateTime @default(now())
   createdAt  DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id])
+  user User? @relation(fields: [userId], references: [id])
 }
 
 /**
@@ -242,4 +242,17 @@ model AuditLog {
   createdAt      DateTime @default(now())
 
   actor User? @relation("actor", fields: [actorId], references: [id])
+}
+
+model Otp {
+  id         String    @id @default(uuid())
+  phone      String
+  codeHash   String
+  attempts   Int       @default(0)
+  consumed   Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  lastSentAt DateTime?
+  expiresAt  DateTime
+
+  @@index([phone])
 }
