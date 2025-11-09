@@ -1,0 +1,245 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * Full Prisma schema for org-level ledger app.
+ * - Multi-org users via OrgMembership
+ * - Roles & Permissions (org-scoped or global)
+ * - Parties (global) with OrgParty mapping
+ * - Immutable Transactions + materialized Balance
+ * - Devices, ApiKeys, Invites, AuditLog
+ */
+
+model User {
+  id        String   @id @default(uuid())
+  name      String?
+  phone     String?  @unique
+  email     String?  @unique
+  createdAt DateTime @default(now())
+
+  // relations
+  devices      Device[]
+  memberships  OrgMembership[]
+  // transactions created by this user (nullable createdBy on Transaction)
+  transactions Transaction[]   @relation("createdBy")
+  auditLogs    AuditLog[]      @relation("actor")
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String?  @unique
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  members      OrgMembership[]
+  parties      OrgParty[]
+  transactions Transaction[]
+  balances     Balance[]
+  invites      Invite[]
+  apiKeys      ApiKey[]
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  orgId       String? // null = global role, otherwise org-scoped
+  name        String
+  description String?
+  isCustom    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  // opposite relations
+  rolePermissions RolePermission[]
+  memberships     OrgMembership[]
+
+  @@unique([orgId, name])
+}
+
+model Permission {
+  id   String @id @default(uuid())
+  name String @unique
+
+  // opposite relation to RolePermission
+  rolePermissions RolePermission[]
+}
+
+model RolePermission {
+  roleId String
+  permId String
+
+  role Role       @relation(fields: [roleId], references: [id])
+  perm Permission @relation(fields: [permId], references: [id])
+
+  @@id([roleId, permId])
+}
+
+/**
+ * Membership: user ↔ org with a role
+ */
+model OrgMembership {
+  id        String   @id @default(uuid())
+  userId    String
+  orgId     String
+  roleId    String
+  scopes    Json? // optional JSON for per-membership scoping
+  createdAt DateTime @default(now())
+
+  user User         @relation(fields: [userId], references: [id])
+  org  Organization @relation(fields: [orgId], references: [id])
+  role Role         @relation(fields: [roleId], references: [id])
+
+  @@unique([orgId, userId])
+  @@index([orgId])
+}
+
+/**
+ * Global canonical person/company
+ */
+model Party {
+  id             String   @id @default(uuid())
+  canonicalName  String?
+  canonicalPhone String?  @unique
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  orgParties   OrgParty[]
+  transactions Transaction[]
+}
+
+/**
+ * Org-scoped mapping of a Party
+ */
+model OrgParty {
+  id        String   @id @default(uuid())
+  orgId     String
+  partyId   String
+  alias     String?
+  phone     String?
+  role      String? // e.g., "customer","supplier","both"
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  org   Organization @relation(fields: [orgId], references: [id])
+  party Party        @relation(fields: [partyId], references: [id])
+
+  @@unique([orgId, partyId])
+  @@index([orgId, phone])
+}
+
+/**
+ * Immutable Transaction model
+ */
+model Transaction {
+  id           String   @id @default(uuid())
+  orgId        String
+  partyId      String?
+  type         String // 'credit' | 'debit' | 'settlement' | 'adjustment'
+  amount       Decimal  @db.Decimal(18, 2)
+  currency     String   @default("INR")
+  note         String?
+  clientId     String? // client generated id for idempotency (unique per org)
+  clientSeq    BigInt?
+  deviceId     String?
+  serverSeq    BigInt?
+  status       String   @default("posted") // posted | pending | reversed
+  referencedId String? // id of referenced transaction for reversals/settlements
+  createdById  String? // who created this transaction (nullable for system)
+  createdAt    DateTime @default(now())
+  meta         Json?
+
+  // relations
+  org       Organization @relation(fields: [orgId], references: [id])
+  party     Party?       @relation(fields: [partyId], references: [id])
+  createdBy User?        @relation("createdBy", fields: [createdById], references: [id])
+
+  @@unique([orgId, clientId])
+  @@index([orgId, partyId, createdAt])
+  @@index([orgId, serverSeq])
+}
+
+/**
+ * Materialized balance for fast reads
+ */
+model Balance {
+  id        String   @id @default(uuid())
+  orgId     String
+  partyId   String?
+  amount    Decimal  @default("0.00") @db.Decimal(18, 2)
+  currency  String   @default("INR")
+  updatedAt DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id])
+
+  @@unique([orgId, partyId])
+  @@index([orgId])
+}
+
+/**
+ * Device for push tokens / device metadata
+ */
+model Device {
+  id         String   @id @default(uuid())
+  userId     String
+  token      String? // push token or device identifier
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+/**
+ * API keys for org integrations
+ */
+model ApiKey {
+  id          String    @id @default(uuid())
+  orgId       String
+  name        String
+  keyHash     String // store hashed token
+  permissions Json?
+  createdAt   DateTime  @default(now())
+  lastUsedAt  DateTime?
+
+  org Organization @relation(fields: [orgId], references: [id])
+
+  @@index([orgId])
+}
+
+/**
+ * Invite flow
+ */
+model Invite {
+  id         String    @id @default(uuid())
+  orgId      String
+  email      String?
+  phone      String?
+  roleId     String
+  token      String    @unique
+  createdBy  String?
+  acceptedBy String?
+  status     String    @default("pending") // pending | accepted | revoked | expired
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime?
+
+  org Organization @relation(fields: [orgId], references: [id])
+}
+
+/**
+ * Audit log (append-only)
+ */
+model AuditLog {
+  id             String   @id @default(uuid())
+  referenceTable String
+  referenceId    String?
+  action         String
+  payload        Json
+  actorId        String?
+  createdAt      DateTime @default(now())
+
+  actor User? @relation("actor", fields: [actorId], references: [id])
+}
