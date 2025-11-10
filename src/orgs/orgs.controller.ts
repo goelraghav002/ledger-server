@@ -5,12 +5,16 @@ import { CreateOrgDto } from './dto/create-org.dto';
 
 @Controller('v1/orgs')
 export class OrgsController {
-  constructor(private readonly orgsService: OrgsService) {}
+  constructor(private readonly orgsService: OrgsService) { }
 
   @UseGuards(AuthGuard('jwt'))
   @Post()
   async create(@Body() dto: CreateOrgDto, @Request() req: any) {
-    const user = req.user;
-    return this.orgsService.createOrg(dto, user);
+    try {
+      const user = req.user;
+      return this.orgsService.createOrg(dto, user);
+    } catch (error) {
+      throw error;
+    }
   }
 }
